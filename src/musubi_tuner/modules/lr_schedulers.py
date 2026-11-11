@@ -40,26 +40,29 @@ class RexLR(torch.optim.lr_scheduler.LRScheduler):
         super().__init__(optimizer, last_epoch)
 
     def get_lr(self):
-        # Single warmup step
-        if self.num_warmup_steps == 1 and self.last_epoch == 1:
-            return [self.min_lr for _ in self.base_lrs]
-        # Multiple warmup steps; increase lr linearly from min_lr to max_lr
-        elif self.num_warmup_steps > 1 and self.last_epoch >= 1 and self.last_epoch <= (self.num_warmup_steps - 1):
-            return [
-                self.min_lr + (self.max_lr - self.min_lr) * (self.last_epoch - 1) / (self.num_warmup_steps - 1)
-                for _ in self.base_lrs
-            ]
+        # LRScheduler.step() runs once in __init__, and the training loop calls
+        # optimizer.step() before lr_scheduler.step(), so last_epoch == 0 is the
+        # rate of the first update. Warmup covers that step through
+        # last_epoch == num_warmup_steps - 1, linearly from min_lr to max_lr.
+        if self.num_warmup_steps > 0 and self.last_epoch < self.num_warmup_steps:
+            if self.num_warmup_steps == 1:
+                warmup_lr = self.min_lr
+            else:
+                progress = self.last_epoch / (self.num_warmup_steps - 1)
+                warmup_lr = self.min_lr + (self.max_lr - self.min_lr) * progress
+            return [warmup_lr for _ in self.base_lrs]
 
         # Post-warmup phase: adjust step relative to the end of warmup
         step_after = self.last_epoch - self.num_warmup_steps
         remaining_steps = self.num_steps - self.num_warmup_steps
 
-        # Avoid LR spiking
-        if step_after >= remaining_steps or step_after == -1 or remaining_steps <= 0:
+        # step_after < 0 must not fall through to `% remaining_steps`: a negative
+        # index wraps into the middle of the decay and spikes the first update.
+        if remaining_steps <= 0 or step_after < 0 or step_after >= remaining_steps:
             return [self.min_lr for _ in self.base_lrs]
 
         # Calculate REX curve for current step
-        rex_z = (remaining_steps - (step_after % remaining_steps)) / remaining_steps
+        rex_z = (remaining_steps - step_after) / remaining_steps
         rex_factor = self.min_lr / self.max_lr + (1.0 - self.min_lr / self.max_lr) * (
             rex_z / (self.rex_alpha + self.rex_beta * rex_z)
         )

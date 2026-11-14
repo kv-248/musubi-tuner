@@ -454,7 +454,7 @@ class T5EncoderModel:
         self,
         text_len,
         dtype=torch.bfloat16,
-        device=torch.cuda.current_device(),
+        device=None,
         checkpoint_path=None,
         tokenizer_path=None,
         shard_fn=None,
@@ -463,6 +463,12 @@ class T5EncoderModel:
     ):
         self.text_len = text_len
         self.dtype = dtype if not fp8 else torch.float8_e4m3fn
+        # Default arguments are evaluated when the class body runs. Calling
+        # torch.cuda.current_device() there crashes every import of this module
+        # on a torch build without CUDA, even if the encoder is never constructed.
+        # Callers pass device explicitly; resolve the CUDA default only if they do not.
+        if device is None:
+            device = torch.cuda.current_device()
         self.device = device
         self.checkpoint_path = checkpoint_path
         self.tokenizer_path = tokenizer_path
